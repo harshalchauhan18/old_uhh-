@@ -1,0 +1,810 @@
+#include "fabm_driver.h"
+
+!-----------------------------------------------------------------------
+!BOP
+!
+! !MODULE: fabm_uhh_clcuni - trait-based cyanobacteria lifestage base model
+!
+! !INTERFACE:
+   module fabm_uhh_clcuni
+!
+! !DESCRIPTION:
+!
+! trait-based model of a cyanobacteria lifestage within a cyanobacteria lifecycle.
+!
+! !USES:
+   use fabm_types
+
+   implicit none
+
+!  default: all is private.
+   private
+!
+! !PUBLIC DERIVED TYPES:
+   type,extends(type_base_model),public :: type_uhh_clcuni
+!     Variable identifiers
+      type (type_state_variable_id)        :: id_c,id_s,id_g
+      type (type_state_variable_id)        :: id_nitrate,id_ammonium
+      type (type_state_variable_id)        :: id_phosphate,id_detritus,id_oxygen
+      type (type_dependency_id)            :: id_par,id_temp
+      type (type_dependency_id)            :: id_salt
+      type (type_horizontal_dependency_id) :: id_I_0
+      type (type_diagnostic_variable_id)   :: id_diage,id_diagq
+      type (type_diagnostic_variable_id)   :: id_up,id_gr,id_lc,id_nf
+
+!     Model parameters
+      real(rk) :: sr
+      real(rk) :: cya0
+      real(rk) :: alpha
+      real(rk) :: kc
+      real(rk) :: s2
+      real(rk) :: s3
+      real(rk) :: mort
+      real(rk) :: w
+      real(rk) :: Qc
+      real(rk) :: E_sc  ! energy storage capacity Emax in Hense&Beckmann 2006
+      real(rk) :: kN
+      real(rk) :: tscale
+      real(rk) :: trange
+      real(rk) :: tfc_c=25.0_rk
+      real(rk) :: theta_e
+      real(rk) :: theta_q
+      real(rk) :: rmatscale
+      real(rk) :: omega0
+      real(rk) :: scale=8.0_rk
+      real(rk) :: fcy2
+      logical  :: n_fixation, lifecycling
+      real(rk) :: m
+      real(rk) :: uptake_factor
+      real(rk) :: growth_factor
+      real(rk) :: lightcapture_factor
+      real(rk) :: e_max,e_min,q_max,q_min
+      real(rk) :: Sflux_per_Cflux, Gflux_per_Cflux
+      real(rk) :: depo
+      logical  :: use_phosphate
+      logical  :: use_ammonium
+      logical  :: use_oxygen
+      real(rk) :: c0 = 1.0e-5_rk
+      real(rk) :: g0 = 5.0e-6_rk
+      real(rk) :: s0 = 5.0e-6_rk
+
+      contains
+
+      procedure :: initialize
+      procedure :: do
+      procedure :: do_ppdd
+      procedure :: do_bottom
+      procedure :: do_bottom_ppdd
+      procedure :: get_light_extinction
+      procedure :: get_vertical_movement
+      procedure :: get_status_v2
+      procedure :: get_status_v3
+      procedure :: get_vs_from_status
+      procedure :: get_factors_v1
+      procedure :: get_factors_from_status
+      procedure :: get_factors_from_quota
+   end type
+!EOP
+!-----------------------------------------------------------------------
+
+   contains
+
+!-----------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: Initialise the CLC model
+!
+! !INTERFACE:
+   subroutine initialize(self,configunit)
+!
+! !DESCRIPTION:
+!  Here, the uhh_clc namelist is read and variables exported
+!  by the model are registered with FABM.
+!
+! !INPUT PARAMETERS:
+   class (type_uhh_clcuni), intent(inout), target :: self
+   integer,                        intent(in)          :: configunit
+!
+! !LOCAL VARIABLES:
+   real(rk)                  :: c_initial,g_initial,s_initial
+   real(rk)                  :: background_concentration
+   real(rk)                  :: w
+   real(rk)                  :: kc
+   real(rk)                  :: mortality_rate
+   real(rk)                  :: alpha
+   real(rk)                  :: sr,s2,s3
+   real(rk)                  :: Qc
+   real(rk)                  :: kN
+   real(rk)                  :: e_max,e_min,q_max,q_min
+   real(rk)                  :: Sflux_per_Cflux, Gflux_per_Cflux
+   real(rk)                  :: e_storage_capacity
+   real(rk)                  :: tscale
+   real(rk)                  :: trange
+   real(rk)                  :: theta_e
+   real(rk)                  :: theta_q
+   real(rk)                  :: omega0
+   real(rk)                  :: rmatscale
+   real(rk)                  :: scale=8.0_rk
+   logical                   :: n_fixation
+   real(rk)                  :: m
+   real(rk)                  :: c0,s0,g0
+   real(rk)                  :: fcy2
+   real(rk)                  :: depo
+   real(rk)                  :: uptake_factor
+   real(rk)                  :: growth_factor
+   real(rk)                  :: lightcapture_factor
+   character(len=64)         :: next_in_cycle
+   character(len=64)         :: phosphate_variable
+   character(len=64)         :: ammonium_variable
+   character(len=64)         :: nitrate_variable
+   character(len=64)         :: detritus_variable
+   character(len=64)         :: oxygen_variable
+   character(len=64)         :: lifestage_name
+
+   real(rk), parameter :: secs_pr_day = 86400.0_rk
+   namelist /uhh_clcuni/ &
+             c_initial,s_initial,g_initial,background_concentration, &
+             w, kc, sr, s2, s3, rmatscale, omega0, alpha, fcy2, &
+             Qc,kN,tscale,trange,theta_e,theta_q,scale, e_storage_capacity, &
+             e_max,e_min,q_max,q_min,Sflux_per_Cflux, Gflux_per_Cflux, &
+             mortality_rate, next_in_cycle, n_fixation, m, depo, &
+             uptake_factor, growth_factor, lightcapture_factor, &
+             ammonium_variable,nitrate_variable, &
+             phosphate_variable, detritus_variable, &
+             oxygen_variable, lifestage_name,c0,s0,g0
+!EOP
+!-----------------------------------------------------------------------
+!BOC
+   c_initial = 0.0_rk
+   g_initial = 0.0_rk
+   s_initial = 0.0_rk
+
+!   background_concentration = 0.0225_rk
+   w         = 0.1_rk
+   kc        = 0.03_rk
+   sr        = 0.0625_rk
+   s2        = 6.625_rk
+   s3        = 8.625_rk 
+   Qc        = 0.0_rk
+   kN        = 0.0_rk
+   e_max     = 1.0_rk
+   e_min     = 0.0_rk
+   q_max     = 1.0_rk
+   q_min     = 0.0_rk
+   e_storage_capacity = 5.5_rk
+   tscale    = 0.0_rk
+   trange    = 0.05_rk
+   theta_e   = 0.0_rk
+   theta_q   = 0.0_rk
+   scale     = 8.0_rk
+   rmatscale = 45.0_rk
+   omega0    = 2.8e-6_rk
+   n_fixation=.false.
+   m         = 3.0_rk
+   fcy2      = 4.0_rk
+   depo      = 0.0_rk
+   uptake_factor = 0.0_rk
+   growth_factor = 0.0_rk
+   lightcapture_factor = 0.0_rk
+   mortality_rate = 0.02_rk ! mort [1/d]
+   c0=1.0e-7_rk
+   s0=0.5e-7_rk
+   g0=0.5e-7_rk
+
+   nitrate_variable = 'uhh_ergom_split_base_nit'
+   ammonium_variable = 'uhh_ergom_split_base_amm'
+   phosphate_variable = 'uhh_ergom_split_base_pho'
+   detritus_variable = 'uhh_ergom_split_base_det'
+   oxygen_variable = 'uhh_ergom_split_base_oxy'
+   lifestage_name = ''
+   next_in_cycle = ''
+
+   ! Read the namelist
+   if (configunit>=0) read(configunit,nml=uhh_clcuni,err=99)
+
+   ! set dependency switches
+   self%use_phosphate = phosphate_variable /= ''
+   self%use_ammonium  = ammonium_variable /= ''
+   self%use_oxygen    = oxygen_variable /= ''
+
+   ! Store parameter values in our own derived type
+   ! NB: all rates must be provided in values per day,
+   ! and are converted here to values per second.
+   call self%get_parameter(self%cya0, 'background_concentration', default=background_concentration)
+   call self%get_parameter(self%kc,     'kc',     default=kc)
+   call self%get_parameter(self%alpha,  'alpha',  default=alpha)
+   call self%get_parameter(self%sr,     'sr',     default=sr)
+   call self%get_parameter(self%s2,     's2',     default=s2)
+   call self%get_parameter(self%s3,     's3',     default=s3)
+   call self%get_parameter(self%e_max,  'e_max',  default=e_max)
+   call self%get_parameter(self%e_min,  'e_min',  default=e_min)
+   call self%get_parameter(self%q_max,  'q_max',  default=q_max)
+   call self%get_parameter(self%q_min,  'q_min',  default=q_min)
+   call self%get_parameter(self%scale,  'scale',  default=scale)
+   call self%get_parameter(self%e_sc, 'e_storage_capacity', default=e_storage_capacity)
+   call self%get_parameter(self%tscale, 'tscale', default=tscale)
+   call self%get_parameter(self%trange, 'trange', default=trange)
+   call self%get_parameter(self%theta_e,'theta_e',default=theta_e)
+   call self%get_parameter(self%theta_q,'theta_q',default=theta_q)
+   call self%get_parameter(self%kN,     'kN',     default=kN)
+   call self%get_parameter(self%Qc,     'Qc',     default=Qc)
+   call self%get_parameter(self%m,      'm',      default=m)
+   call self%get_parameter(self%fcy2,   'fcy2',   default=fcy2)
+   call self%get_parameter(self%depo,   'depo',   default=depo)
+   call self%get_parameter(self%n_fixation, 'n_fixation', default=n_fixation)
+   call self%get_parameter(self%uptake_factor, 'uptake_factor', default=uptake_factor)
+   call self%get_parameter(self%growth_factor, 'growth_factor', default=growth_factor)
+   call self%get_parameter(self%lightcapture_factor, 'lightcapture_factor', default=lightcapture_factor)
+   call self%get_parameter(self%omega0, 'omega0', default=omega0)
+   call self%get_parameter(self%rmatscale, 'rmatscale', default=rmatscale)
+   call self%get_parameter(self%w,      'w',      default=w,  scale_factor=1.0_rk/secs_pr_day)
+   call self%get_parameter(self%mort,   'mortality_rate', default=mortality_rate,  scale_factor=1.0_rk/secs_pr_day)
+   self%c0=c0
+   self%s0=s0
+   self%g0=g0
+   
+   ! Register state variables
+   call self%register_state_variable(self%id_c,'C', &
+         'mmol n/m**3','biomass', c_initial, &
+         minimum=self%c0,vertical_movement=self%w)
+
+   call self%register_state_variable(self%id_g,'G', &
+         'mmol n/m**3','energy', g_initial, &
+         minimum=self%g0,vertical_movement=self%w)
+
+   call self%register_state_variable(self%id_s,'S', &
+         'mmol n/m**3','quota', s_initial, &
+         minimum=self%s0,vertical_movement=self%w)
+
+
+   ! Register dependencies on external standard variables
+   if (self%use_ammonium) &
+     call self%register_state_dependency(self%id_ammonium, 'ammonium_target', 'mmol/m**3','ammonium source')
+   call self%register_state_dependency(self%id_nitrate, 'nitrate_target', 'mmol/m**3','nitrate source')
+   if (self%use_phosphate) &
+     call self%register_state_dependency(self%id_phosphate, 'phosphate_target',  'mmol/m**3','phosphate source')
+
+   
+   ! Register external state dependencies
+   call self%register_state_dependency(self%id_detritus, 'mortality_target','mmol/m**3','sink for dead matter')
+   if (self%use_oxygen) &
+     call self%register_state_dependency(self%id_oxygen,   'oxygen_target'   ,'mmol-O2/m**3','dissolved oxygen pool')
+
+   if (self%use_ammonium) &
+     call self%request_coupling(self%id_ammonium, ammonium_variable)
+   call self%request_coupling(self%id_nitrate, nitrate_variable)
+   if (self%use_phosphate) &
+     call self%request_coupling(self%id_phosphate, phosphate_variable)
+   call self%request_coupling(self%id_detritus,detritus_variable)
+   if (self%use_oxygen) &
+     call self%request_coupling(self%id_oxygen, oxygen_variable)
+   
+   ! Register environmental dependencies
+   call self%register_dependency(self%id_par, standard_variables%downwelling_photosynthetic_radiative_flux)
+   call self%register_dependency(self%id_temp, standard_variables%temperature)
+   call self%register_dependency(self%id_salt, standard_variables%practical_salinity)
+   call self%register_dependency(self%id_I_0, standard_variables%surface_downwelling_photosynthetic_radiative_flux)
+
+   ! Register diagnostic variables
+   call self%register_diagnostic_variable(self%id_diage,'E','1/1', &
+         'energy status', output=output_instantaneous)
+   call self%register_diagnostic_variable(self%id_diagq,'Q','1/1', &
+         'internal quota', output=output_instantaneous)
+   call self%register_diagnostic_variable(self%id_gr,'growth','1/d', &
+         'relative growth rate', output=output_instantaneous)
+   call self%register_diagnostic_variable(self%id_up,'uptake','1/d', &
+         'relative uptake rate', output=output_instantaneous)
+   call self%register_diagnostic_variable(self%id_lc,'lightcapture','1/d', &
+         'relative light capturing rate', output=output_instantaneous)
+   call self%register_diagnostic_variable(self%id_nf,'nfixation','1/d', &
+         'relative fixation rate', output=output_instantaneous)
+   return
+
+99 call self%fatal_error('fabm_uhh_clcuni','Error reading namelist uhh_clcuni')
+
+   end subroutine initialize
+!EOC
+
+!-----------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: Right hand sides of clcuni model
+!
+! !INTERFACE:
+   subroutine do(self,_ARGUMENTS_DO_)
+!
+! !INPUT PARAMETERS:
+   class (type_uhh_clcuni), intent(in) :: self
+   _DECLARE_ARGUMENTS_DO_
+!
+! !LOCAL VARIABLES:
+   real(rk)                   :: ni,am,c,g,s,d,po,par,I_0,temp,e,q,ep,fqc,nut
+   real(rk)                   :: uptake,light_capture
+   real(rk)                   :: growth,fixation,grhs
+   real(rk)                   :: sigma_e,sigma_n,sigma_l,sigma_q,omega
+   real(rk)                   :: salt,sigma_salt
+   real(rk), parameter        :: secs_pr_day = 86400.0_rk
+   real(rk), parameter        :: c0 = 1.0e-8_rk
+   real(rk), parameter        :: g0 = 5.0e-10_rk
+   real(rk), parameter        :: s0 = 5.0e-10_rk
+!EOP
+!-----------------------------------------------------------------------
+!BOC
+   ! Enter spatial loops (if any)
+   _LOOP_BEGIN_
+
+   ! Retrieve current (local) state variable values.
+   _GET_(self%id_c,c)                ! biomass
+   _GET_(self%id_g,g)                ! energy
+   _GET_(self%id_s,s)                ! quota
+   _GET_(self%id_nitrate,ni)         ! nitrate
+   _GET_(self%id_detritus,d)         ! detritus
+   if (self%use_ammonium) then
+     _GET_(self%id_ammonium,am)      ! ammonium
+   else
+     am=0.0_rk
+   end if
+   nut = ni + am
+
+   if (self%use_phosphate) then
+     _GET_(self%id_phosphate,po)     ! phosphate
+   else
+     po = nut/16.0_rk
+   end if
+
+   ! Retrieve current environmental conditions.
+   _GET_(self%id_par,par)             ! local photosynthetically active radiation
+   _GET_(self%id_temp,temp)           ! local temperature
+   _GET_HORIZONTAL_(self%id_I_0,I_0)  ! surface short wave radiation
+
+   !RH: nan for t==12.0_rk !
+   omega = self%omega0 * (1.0_rk/self%rmatscale + &
+     1.0_rk/(0.25_rk+exp(3.0_rk/(temp-12.0_rk)-0.5_rk)+exp(-500.0_rk/(temp-12.0_rk)+self%tfc_c)))
+   sigma_l = omega * self%alpha * par / sqrt(omega**2 + self%alpha**2 * par**2)
+   sigma_n = nut / (nut + self%kN)
+
+   _GET_(self%id_salt,salt)           ! local salinity
+   sigma_salt = max(min(1.0_rk,6.5_rk-abs(salt-11.5_rk)),0.0_rk)
+   ! apply salinity limitation to omega to be active for 
+   ! growth, uptake and N-fixation
+   omega = omega * sigma_salt
+
+   e = 0.0_rk
+   q = 0.0_rk
+   if (c > 0.0_rk) then
+   !RH: maybe relax to e0,q0 for low g,s,c (e=(g+g0)/(c+c0)
+     e = g/(c+c0)
+     q = s/(c+c0)
+     !e = (g+g0)/(c+c0)
+     !q = (s+s0)/(c+c0)
+   endif
+   ! previous "emax" is replaced by self%e_sc (in namelist: E_storage_capacity)
+   ! previous "er" is replaced by sigma_e (see Hense&Beckmann(2006))
+   ! previous "fq" is replaced by sigma_q (see Hense&Beckmann(2006))
+   ep       = tanh(self%scale-self%scale*e/self%e_sc)
+   sigma_e  = tanh(           self%scale*e/self%e_sc)
+   fqc      = tanh(self%scale-self%scale*q/self%Qc)
+   sigma_q  = tanh(           self%scale*q/self%Qc)
+
+   ! specific rates 
+   light_capture = self%lightcapture_factor * sigma_l * ep
+   uptake = self%uptake_factor * omega * sigma_n * sigma_e * fqc
+   growth = self%growth_factor * omega * sigma_e * sigma_q
+   ! fixation_factor is the energy consumption factor for fixation = 3 for heterocysts
+   fixation = 0.0_rk
+   if (self%n_fixation) then
+     fixation = omega * sigma_e
+     growth = self%fcy2 * growth
+   end if
+
+   ! Set temporal derivatives
+   _SET_ODE_(self%id_c,c*(growth + self%growth_factor*fixation - self%mort))
+   _SET_ODE_(self%id_s,c*(uptake - growth) - s*self%mort)
+    grhs = c*(light_capture - uptake - &
+           (self%m + self%growth_factor)*fixation - growth) - g*self%mort
+   _SET_ODE_(self%id_g,grhs)
+
+   ! external nutrients
+   _SET_ODE_(self%id_nitrate,-c*uptake * ni/(ni+am))
+   if (self%use_ammonium) then
+     _SET_ODE_(self%id_ammonium,-c*uptake * am/(ni+am))
+   end if
+   _SET_ODE_(self%id_detritus,c*self%mort+s*self%mort)
+   if (self%use_phosphate) then
+     _SET_ODE_(self%id_phosphate, -self%sr *c*uptake)
+   end if
+   ! add oxygen dynamics
+
+   ! Export diagnostic variables
+   _SET_DIAGNOSTIC_(self%id_diage,e)
+   _SET_DIAGNOSTIC_(self%id_diagq,q)
+   _SET_DIAGNOSTIC_(self%id_gr,growth*86400.0_rk)
+   _SET_DIAGNOSTIC_(self%id_up,uptake*86400.0_rk)
+   _SET_DIAGNOSTIC_(self%id_lc,light_capture*86400.0_rk)
+   _SET_DIAGNOSTIC_(self%id_nf,fixation*86400.0_rk)
+   
+   ! Leave spatial loops (if any)
+   _LOOP_END_
+
+   end subroutine do
+!EOC
+
+!-----------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: Get the light extinction coefficient due to biogeochemical
+! variables
+!
+! !INTERFACE:
+   subroutine get_light_extinction(self,_ARGUMENTS_GET_EXTINCTION_)
+!
+! !INPUT PARAMETERS:
+   class (type_uhh_clcuni), intent(in)     :: self
+   _DECLARE_ARGUMENTS_GET_EXTINCTION_
+!
+! !LOCAL VARIABLES:
+   real(rk)                     :: c
+!
+!EOP
+!-----------------------------------------------------------------------
+!BOC
+   ! Enter spatial loops (if any)
+   _LOOP_BEGIN_
+
+   ! Retrieve current (local) state variable values.
+   _GET_(self%id_c,c) ! biomass concentration
+
+   ! Self-shading
+   _SET_EXTINCTION_(self%kc*c)
+
+   ! Leave spatial loops (if any)
+   _LOOP_END_
+
+   end subroutine get_light_extinction
+!EOC
+
+   subroutine do_ppdd(self,_ARGUMENTS_DO_PPDD_)
+   class (type_uhh_clcuni),intent(in) :: self
+   _DECLARE_ARGUMENTS_DO_PPDD_
+
+   real(rk)                   :: ni,am,c,g,s,po,par,I_0,temp,e,q,ep,fqc,nut
+   real(rk)                   :: uptake,light_capture
+   real(rk)                   :: growth,fixation
+   real(rk)                   :: sigma_e,sigma_n,sigma_l,sigma_q,omega
+   real(rk)                   :: lightcapture_factor, growth_factor
+   real(rk)                   :: uptake_factor, fixation_factor
+   real(rk)                   :: mortality_factor
+   real(rk)                   :: ctrl_e,ctrl_q,ctrl_eu,ctrl_qu,ctrl_el,ctrl_ql
+   real(rk), parameter        :: secs_pr_day = 86400.0_rk
+!EOP
+!-----------------------------------------------------------------------
+!BOC
+   ! Enter spatial loops (if any)
+   _LOOP_BEGIN_
+
+   ! Retrieve current (local) state variable values.
+   _GET_(self%id_c,c)                ! biomass
+   _GET_(self%id_g,g)                ! energy
+   _GET_(self%id_s,s)                ! quota
+   _GET_(self%id_nitrate,ni)         ! nitrate
+   if (self%use_ammonium) then
+     _GET_(self%id_ammonium,am)      ! ammonium
+   else
+     am=0.0_rk
+   end if
+   nut = ni + am
+
+   if (self%use_phosphate) then
+     _GET_(self%id_phosphate,po)     ! phosphate
+   else
+     po = nut/16.0_rk
+   end if
+
+   ! Retrieve current environmental conditions.
+   _GET_(self%id_par,par)             ! local photosynthetically active radiation
+   _GET_(self%id_temp,temp)           ! local temperature
+   _GET_HORIZONTAL_(self%id_I_0,I_0)  ! surface short wave radiation
+
+   !RH: nan for t==12.0_rk !
+   omega = self%omega0 * (1.0_rk/self%rmatscale + &
+     1.0_rk/(0.25_rk+exp(3.0_rk/max(0.5_rk,(temp-12.0_rk))-0.5_rk)+exp(-500.0_rk/max(0.5_rk,(temp-12.0_rk))+self%tfc_c)))
+   sigma_l = omega * self%alpha * par / sqrt(omega**2 + self%alpha**2 * par**2)
+   sigma_n = nut / (nut + self%kN)
+
+   ! relax to e0,q0 for low g,s,c (e=(g+g0)/(c+c0)
+   e = (g+self%g0)/(c+self%c0)
+   q = (s+self%s0)/(c+self%c0)
+   
+   ! previous "emax" is replaced by self%e_sc (in namelist: E_storage_capacity)
+   ! previous "er" is replaced by sigma_e (see Hense&Beckmann(2006))
+   ! previous "fq" is replaced by sigma_q (see Hense&Beckmann(2006))
+   ep       = tanh(self%scale-self%scale*e/self%e_sc)
+   sigma_e  = tanh(           self%scale*e/self%e_sc)
+   fqc      = tanh(self%scale-self%scale*q/self%Qc)
+   sigma_q  = tanh(           self%scale*q/self%Qc)
+
+   call self%get_factors_from_quota(e,q, g=growth_factor, u=uptake_factor, &
+     m=mortality_factor, l=lightcapture_factor, f=fixation_factor)
+
+   ! specific rates 
+   light_capture = lightcapture_factor * sigma_l * ep
+   uptake = uptake_factor * omega * sigma_n * sigma_e * fqc
+   growth = growth_factor * omega * sigma_e * sigma_q
+   fixation = omega * sigma_e * fixation_factor
+   growth = growth + self%fcy2 * fixation_factor * omega * sigma_e * sigma_q
+
+   ! Set temporal derivatives
+   _SET_DD_SYM_(self%id_c,self%id_detritus,c*mortality_factor*self%mort)
+   _SET_DD_SYM_(self%id_s,self%id_detritus,s*mortality_factor*self%mort)
+   _SET_DD_(self%id_g,self%id_g,g*mortality_factor*self%mort)
+   _SET_PP_(self%id_g,self%id_g,c*light_capture)
+
+   _SET_DD_SYM_(self%id_s,self%id_c,c*growth)
+   _SET_DD_SYM_(self%id_g,self%id_s,c*uptake)
+   _SET_DD_(self%id_g,self%id_g,c*growth)
+   
+   ! external nutrients
+   _SET_DD_(self%id_nitrate,self%id_nitrate,c*uptake*ni/(ni+am))
+   if (self%use_ammonium) then
+     _SET_DD_(self%id_ammonium,self%id_ammonium,c*uptake*am/(ni+am))
+   end if
+   if (self%use_phosphate) then
+     _SET_DD_(self%id_phosphate,self%id_phosphate,self%sr *c*uptake)
+   end if
+
+   ! fixation
+   _SET_DD_SYM_(self%id_g,self%id_c,c*fixation)
+   _SET_DD_(self%id_g,self%id_g,c*self%m*fixation)
+
+   ! Export diagnostic variables
+   _SET_DIAGNOSTIC_(self%id_diage,e)
+   _SET_DIAGNOSTIC_(self%id_diagq,q)
+!   _SET_DIAGNOSTIC_(self%id_gr,growth_factor)
+!   _SET_DIAGNOSTIC_(self%id_up,uptake_factor)
+!   _SET_DIAGNOSTIC_(self%id_lc,lightcapture_factor)
+!   _SET_DIAGNOSTIC_(self%id_nf,fixation_factor)
+   _SET_DIAGNOSTIC_(self%id_gr,growth*86400.0_rk)
+   _SET_DIAGNOSTIC_(self%id_up,uptake*86400.0_rk)
+   _SET_DIAGNOSTIC_(self%id_lc,light_capture*86400.0_rk)
+   _SET_DIAGNOSTIC_(self%id_nf,fixation*86400.0_rk)
+   
+   ! Leave spatial loops (if any)
+   _LOOP_END_
+
+   end subroutine do_ppdd
+
+
+
+   subroutine get_vertical_movement(self,_FABM_ARGS_GET_VERTICAL_MOVEMENT_)
+   implicit none
+
+   class (type_uhh_clcuni), intent(in) :: self
+   _DECLARE_FABM_ARGS_GET_VERTICAL_MOVEMENT_
+   real(rk) :: c,g,s,e,q,ctrl_e,ctrl_q
+   real(rk) :: sinking_factor
+   real(rk) :: w
+   logical  :: highE, highQ
+
+   _FABM_LOOP_BEGIN_
+   ! Retrieve current (local) state variable values.
+   _GET_(self%id_c,c)                ! biomass
+   _GET_(self%id_g,g)                ! energy
+   _GET_(self%id_s,s)                ! quota
+
+   e = 0.0_rk
+   q = 0.0_rk
+   if (c > 0.0_rk) then
+   !RH: maybe relax to e0,q0 for low g,s,c (e=(g+g0)/(c+c0)
+     e = g/c
+     q = s/c
+     !e = (g+g0)/(c+c0)
+     !q = (s+s0)/(c+c0)
+   endif
+
+   call self%get_status_v3(e,q,highE,highQ)
+   w = self%get_vs_from_status(highE,highQ)
+
+
+   _SET_VERTICAL_MOVEMENT_(self%id_c,w)
+   _SET_VERTICAL_MOVEMENT_(self%id_g,w)
+   _SET_VERTICAL_MOVEMENT_(self%id_s,w)
+   _FABM_LOOP_END_
+
+   end subroutine get_vertical_movement
+
+
+
+   subroutine do_bottom(self,_ARGUMENTS_DO_BOTTOM_)
+   class (type_uhh_clcuni), intent(in) :: self
+   _DECLARE_ARGUMENTS_DO_BOTTOM_
+   real(rk) :: c,g,s
+
+   _FABM_HORIZONTAL_LOOP_BEGIN_
+
+   ! Retrieve current (local) state variable values.
+   _GET_(self%id_c,c)                ! biomass
+   _GET_(self%id_g,g)                ! energy
+   _GET_(self%id_s,s)                ! quota
+
+
+   ! in bio_clc code, self%depo was given in units 1/s per mmol-N/m3 biomass,
+   ! here, self%depo is of units m/s per mmol-N/m3 biomass. The results should
+   ! be comparable, since the bottom layer height in the calibrated setup
+   ! is appr. 1.03 m.
+   _SET_BOTTOM_EXCHANGE_(self%id_c,-self%depo*c*c)
+   _SET_BOTTOM_EXCHANGE_(self%id_s,-self%depo*c*s)
+   _SET_BOTTOM_EXCHANGE_(self%id_g,-self%depo*c*g)
+
+   _FABM_HORIZONTAL_LOOP_END_
+
+   end subroutine do_bottom
+
+   subroutine do_bottom_ppdd(self,_ARGUMENTS_DO_BOTTOM_PPDD_)
+   class (type_uhh_clcuni), intent(in) :: self
+   _DECLARE_ARGUMENTS_DO_BOTTOM_PPDD_
+   real(rk) :: c,g,s,ctrl_e,ctrl_q,depo_fac,e,q
+
+   _FABM_HORIZONTAL_LOOP_BEGIN_
+
+   ! Retrieve current (local) state variable values.
+   _GET_(self%id_c,c)                ! biomass
+   _GET_(self%id_g,g)                ! energy
+   _GET_(self%id_s,s)                ! quota
+
+   e = (g+self%g0)/(c+self%c0)
+   q = (s+self%s0)/(c+self%c0)
+
+   ! introduce sigmoid control functions for traits
+   ctrl_e = 0.5_rk*tanh(200.0_rk*(e-0.5_rk)/self%e_sc) + 0.5_rk
+   ctrl_q = 0.5_rk*tanh(200.0_rk*(q-0.5_rk)/self%Qc) + 0.5_rk
+
+   depo_fac = (1.0_rk-ctrl_e)*(1.0_rk-ctrl_q)*self%depo*c
+
+   _SET_BOTTOM_EXCHANGE_(self%id_c,depo_fac*c)
+   _SET_BOTTOM_EXCHANGE_(self%id_s,depo_fac*s)
+   _SET_BOTTOM_EXCHANGE_(self%id_g,depo_fac*g)
+
+   _FABM_HORIZONTAL_LOOP_END_
+
+   end subroutine do_bottom_ppdd
+
+
+   
+   subroutine get_factors_v1(self,e,q,g,u,m,l,f)
+   class(type_uhh_clcuni)    :: self
+   real(rk), intent(in)  :: e,q
+   real(rk), intent(out) :: g,u,m,l,f
+   real(rk)              :: ctrl_e, ctrl_q
+
+
+   ! introduce sigmoid control functions for traits
+   ctrl_e = 0.5_rk*tanh(200.0_rk*(e-0.5_rk)/self%e_sc) + 0.5_rk
+   ctrl_q = 0.5_rk*tanh(200.0_rk*(q-0.5_rk)/self%Qc) + 0.5_rk
+   
+   ! RH: maybe, transition functions for upper and lower
+   !     trait values have to be used:
+   !ctrl_eu = 0.5_rk*tanh(200.0_rk*(e-0.55_rk)/self%e_sc) + 0.5_rk
+   !ctrl_qu = 0.5_rk*tanh(200.0_rk*(q-0.55_rk)/self%Qc) + 0.5_rk
+   !ctrl_el = 0.5_rk*tanh(200.0_rk*(e-0.45_rk)/self%e_sc) + 0.5_rk
+   !ctrl_ql = 0.5_rk*tanh(200.0_rk*(q-0.45_rk)/self%Qc) + 0.5_rk
+
+   ! get factors from traits
+   f = (1.0_rk-ctrl_q)*ctrl_e
+   l = max(0.5_rk,self%lightcapture_factor * max(ctrl_e,ctrl_q))
+   u = self%uptake_factor * max(ctrl_q,0.1_rk) * (1-f)
+   ! describe growth of vegetatives only
+   g = self%growth_factor * ctrl_q * ctrl_e
+   m = max(0.01_rk,ctrl_q,ctrl_e)
+   
+   end subroutine get_factors_v1
+
+
+   subroutine get_factors_from_status(self,highE,highQ,g,u,m,l,f)
+   class(type_uhh_clcuni)    :: self
+   logical, intent(in)   :: highE, highQ
+   real(rk), intent(out) :: g,u,m,l,f
+
+   if (highE) then
+     if (highQ) then
+       ! vegetative
+       g = self%growth_factor
+       u = self%uptake_factor
+       m = 1.0_rk
+       f = 0.0_rk
+       l = self%lightcapture_factor
+     else
+       ! heterocysts
+       g = 0.0_rk
+       u = 0.0_rk
+       m = 1.0_rk
+       f = 1.0_rk
+       l = self%lightcapture_factor
+     end if
+   else
+     if (highQ) then
+       ! recruiting
+       g = 0.0_rk
+       u = self%uptake_factor
+       m = 1.0_rk
+       f = 0.0_rk
+       l = self%lightcapture_factor
+     else
+       ! akinetes
+       g = 0.0_rk
+       u = self%uptake_factor *1.0_rk !* 0.1_rk
+       m = 0.01_rk
+       f = 0.0_rk
+       l = 0.1_rk * self%lightcapture_factor
+     end if
+   end if
+   end subroutine get_factors_from_status 
+
+
+   function get_vs_from_status(self,highE,highQ) result (vs)
+   class(type_uhh_clcuni)       :: self
+   real(rk)                 :: vs
+   logical, intent(in)      :: highE, highQ
+
+   if (highE) then
+       vs = 0.1_rk * self%w
+   else
+     if (highQ) then
+       vs = 1.0_rk * self%w
+     else
+       vs = -10.0_rk * self%w
+     end if
+   end if
+
+   !! introduce sigmoid control functions for traits
+   !ctrl_e = 0.5_rk*tanh(200.0_rk*(e-0.5_rk)/self%e_sc) + 0.5_rk
+   !ctrl_q = 0.5_rk*tanh(200.0_rk*(q-0.5_rk)/self%Qc) + 0.5_rk
+   !
+   !sinking_factor = 0.1_rk*max(ctrl_q,ctrl_e) + 0.9_rk*(1_rk-ctrl_e)*ctrl_q - &
+   !  (1-ctrl_q)*(1-ctrl_e)*10.0_rk
+
+   end function get_vs_from_status
+   
+
+   subroutine get_status_v2(self,e,q,highE,highQ)
+   class(type_uhh_clcuni)    :: self
+   real(rk), intent(in)  :: e,q
+   logical, intent(out)  :: highE, highQ
+   real(rk)              :: ctrl_e,ctrl_q   
+
+   !q<0.45:
+   !highE = sign(1.0,e-0.45)
+   !q>0.45:
+   !highE = sign(1.0,e-0.55)
+
+   highE = sign(1.0_rk,e-0.5_rk+self%trange*sign(1.0_rk,q-0.5+self%trange)) > 0
+   highQ = sign(1.0_rk,q-0.5_rk-self%trange*sign(1.0_rk,e-0.5+self%trange)) > 0
+   
+   end subroutine get_status_v2
+
+   subroutine get_status_v3(self,e,q,highE,highQ)
+   class(type_uhh_clcuni)    :: self
+   real(rk), intent(in)  :: e,q
+   logical, intent(out)  :: highE, highQ
+
+   highE = e > (0.5_rk-self%trange)
+   highQ = q > (0.5_rk-self%trange)
+   
+   end subroutine get_status_v3
+
+   subroutine get_factors_from_quota(self,e,q,g,u,m,l,f)
+   class(type_uhh_clcuni)    :: self
+   real(rk), intent(in)  :: e,q
+   real(rk), intent(out) :: g,u,m,l,f
+   logical               :: highE, highQ
+
+   ! version 1
+   !call self%get_factors_v1(e,q,g,u,m,l,f)
+
+   ! version 2
+   call self%get_status_v3(e,q,highE,highQ)
+   call self%get_factors_from_status(highE,highQ,g,u,m,l,f)
+
+   end subroutine get_factors_from_quota
+
+   end module fabm_uhh_clcuni
+

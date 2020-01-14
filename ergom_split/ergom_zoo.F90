@@ -23,24 +23,20 @@
    type,extends(type_base_model),public :: type_uhh_ergom_split_zoo
 !     Variable identifiers
       type (type_state_variable_id)        :: id_zoo
-      type (type_state_variable_id)        :: id_dia,id_fla,id_din !,id_cya
+      type (type_state_variable_id)        :: id_dia,id_din
       type (type_state_variable_id)        :: id_detritus
       type (type_state_variable_id)        :: id_dic
       type (type_state_variable_id)        :: id_ammonium, id_phosphate
       type (type_state_variable_id)        :: id_oxygen
       type (type_dependency_id)            :: id_temp
       type (type_diagnostic_variable_id)   :: id_secprod_total  
-      type (type_diagnostic_variable_id)   :: id_secprod_dia  
-      type (type_diagnostic_variable_id)   :: id_secprod_fla  
-      type (type_diagnostic_variable_id)   :: id_secprod_din
-!      type (type_diagnostic_variable_id)   :: id_secprod_cya  
+      type (type_diagnostic_variable_id)   :: id_secprod_dia    
+      type (type_diagnostic_variable_id)   :: id_secprod_din 
 
 !     Model parameters
       real(rk) :: topt
       real(rk) :: gmax_dia  ! maximum grazing rate diatoms
-      real(rk) :: gmax_fla  ! maximum grazing rate flagellates
       real(rk) :: gmax_din  ! maximum grazing rate dinoflagellates
-!      real(rk) :: gmax_cya  ! maximum grazing rate cyanobacteria
       real(rk) :: p_to_n    ! P:N ratio of zooplankton
       real(rk) :: zoo0      ! background concentration
       real(rk) :: alpha
@@ -50,7 +46,7 @@
       real(rk) :: lza
       real(rk) :: lzd
       real(rk) :: slopf     ! sloppy feeding factor [0..1]
-      logical  :: graz_dia, graz_fla, graz_din !, graz_cya
+      logical  :: graz_dia, graz_din 
       logical  :: use_oxy, use_pho
 
       contains
@@ -81,23 +77,18 @@
    integer,                        intent(in)            :: configunit
 !
 ! !LOCAL VARIABLES:
-   real(rk)                  :: zoo_initial
-   real(rk)                  :: background_concentration ! zoo0
+   real(rk)                  ::  zoo0 !background_concentration
    real(rk)                  :: topt
    real(rk)                  :: gmax_dia  ! maximum grazing rate diatoms
-   real(rk)                  :: gmax_fla  ! maximum grazing rate flagellates
    real(rk)                  :: gmax_din  ! maximum grazing rate dinoflagellates
-!   real(rk)                  :: gmax_cya  ! maximum grazing rate cyanobacteria
    real(rk)                  :: p_to_n    ! P:N ratio of zooplankton
-   real(rk)                  ::  lza
-   real(rk)                  ::  lzd
+   real(rk)                  :: excretion_rate ! lza
+   real(rk)                  :: mortality_rate ! lzd
    real(rk)                  :: s2, s3, alpha, iv
    real(rk)                  :: slopf
    character(len=64)         :: oxygen_variable
    character(len=64)         :: diatoms_variable
-   character(len=64)         :: flagellates_variable
    character(len=64)         :: dinoflagellates_variable
-!   character(len=64)         :: cyanobacteria_variable
    character(len=64)         :: ammonium_variable
    character(len=64)         :: nitrate_variable
    character(len=64)         :: phosphate_variable
@@ -105,44 +96,34 @@
    character(len=64)         :: dic_variable
 
    real(rk), parameter :: secs_pr_day = 86400.0_rk
-   namelist /uhh_ergom_split_zoo/ &
-             zoo_initial,background_concentration, iv, &
-             gmax_dia, gmax_fla, gmax_din, p_to_n, s2, &
+   namelist /uhh_ergom_split_zoo/ zoo0, iv, &
+             gmax_dia, gmax_din, p_to_n, s2, &
              s3, topt, dic_variable, &
-             lzd, lza, slopf, &
+             mortality_rate, excretion_rate, slopf, &
              ammonium_variable,nitrate_variable, &
              phosphate_variable, detritus_variable, &
              oxygen_variable, diatoms_variable, &
-             flagellates_variable, dinoflagellates_variable !, &
-!             cyanobacteria_variable
+             dinoflagellates_variable
 !EOP
 !-----------------------------------------------------------------------
 !BOC
-   zoo_initial = 0.0_rk
-   background_concentration = 0.0225_rk
+   zoo0 = 0.0225_rk
    gmax_dia     = -1.0_rk
-   gmax_fla     = 0.03_rk
    gmax_din     = 0.03_rk
-!   gmax_cya     = 1.0_rk
    alpha        = 0.3_rk
    p_to_n       = 0.0625_rk
    s2           = 6.625_rk
    s3           = 8.625_rk
    iv           = 0.24444444_rk
    topt         = 20.0_rk
-   lzd = 0.02_rk ! lzd [1/d]
-   lza = 0.01_rk ! lza [1/d]
+   mortality_rate = 0.02_rk ! lzd [1/d]
+   excretion_rate = 0.01_rk ! lza [1/d]
    slopf        = 1.0_rk ! default: no sloppy feeding
-   !nitrate_variable = standard_variables%mole_concentration_of_nitrate
-   !ammonium_variable = standard_variables%mole_concentration_of_ammonium
-   !phosphate_variable = standard_variables%mole_concentration_of_phosphate
    nitrate_variable = 'uhh_ergom_split_base_nit'
    ammonium_variable = 'uhh_ergom_split_base_amm'
    phosphate_variable = 'uhh_ergom_split_base_pho'
    detritus_variable = 'uhh_ergom_split_base_det'
    oxygen_variable = 'uhh_ergom_split_base_oxy'
-!   cyanobacteria_variable='uhh_clcveg_C'
-   flagellates_variable='uhh_ergom_split_flagellates_fla'
    dinoflagellates_variable='uhh_dinoflag_veg'
    diatoms_variable='uhh_diatoms_veg'
    dic_variable=''
@@ -153,7 +134,7 @@
    ! Store parameter values in our own derived type
    ! NB: all rates must be provided in values per day,
    ! and are converted here to values per second.
-   call self%get_parameter(self%zoo0,   'background_concentration', default=background_concentration)
+   call self%get_parameter(self%zoo0,   'zoo0', default=zoo0)
    call self%get_parameter(self%p_to_n,   'p_to_n',   default=p_to_n)
    call self%get_parameter(self%s2,       's2',   default=s2)
    call self%get_parameter(self%s3,       's3',   default=s3)
@@ -161,15 +142,12 @@
    call self%get_parameter(self%slopf,    'slopf',default=slopf)
    call self%get_parameter(self%topt,     'topt', default=topt)
    call self%get_parameter(self%gmax_dia, 'gmax_dia', default=gmax_dia, scale_factor=1.0_rk/secs_pr_day)
-   call self%get_parameter(self%gmax_fla, 'gmax_fla', default=gmax_fla, scale_factor=1.0_rk/secs_pr_day)
    call self%get_parameter(self%gmax_din, 'gmax_din', default=gmax_din, scale_factor=1.0_rk/secs_pr_day)
-!   call self%get_parameter(self%gmax_cya, 'gmax_cya', default=gmax_cya, scale_factor=1.0_rk/secs_pr_day)
-   call self%get_parameter(self%lza,    'lza',default=lza,   scale_factor=1.0_rk/secs_pr_day)
-   call self%get_parameter(self%lzd,    'lzd',default=lzd,   scale_factor=1.0_rk/secs_pr_day)
+   call self%get_parameter(self%lza,    'excretion_rate', default=excretion_rate,  scale_factor=1.0_rk/secs_pr_day)
+   call self%get_parameter(self%lzd,    'mortality_rate', default=mortality_rate,  scale_factor=1.0_rk/secs_pr_day)
    
    ! Register state variables
-   call self%register_state_variable(self%id_zoo,'zoo','mmol n/m**3','zooplankton',  &
-         zoo_initial,minimum=0.0_rk)
+   call self%register_state_variable(self%id_zoo,'zoo','mmol n/m**3','zooplankton')
    
    ! Register dependencies on external standard variables
    call self%register_state_dependency(self%id_ammonium, 'ammonium_target', 'mmol/m**3','sink for excreted matter and ammonium source')
@@ -184,19 +162,13 @@
    if (self%use_oxy) &
      call self%register_state_dependency(self%id_oxygen,   'oxygen_target'   ,'mmol-O2/m**3','dissolved oxygen pool')
    self%graz_dia = (diatoms_variable /= '')
-   self%graz_fla = (flagellates_variable /= '')
    self%graz_din = (dinoflagellates_variable /= '')
-!   self%graz_cya = (cyanobacteria_variable /= '')
-   !write(0,*) self%graz_dia,self%graz_fla,self%graz_din,self%graz_cya
 
 
    if (self%graz_dia) &
-      call self%register_state_dependency(self%id_dia, diatoms_variable)
+      call self%register_state_dependency(self%id_dia, 'diatoms_target')
    if (self%graz_din) &
-      call self%register_state_dependency(self%id_din, dinoflagellates_variable)
- !  if (self%graz_cya) &
- !     call self%register_state_dependency(self%id_cya, cyanobacteria_variable)
-
+      call self%register_state_dependency(self%id_din, 'dinoflagellates_target')
 
    call self%request_coupling(self%id_ammonium, ammonium_variable)
    if (self%use_pho) &
@@ -206,15 +178,11 @@
       call self%request_coupling(self%id_oxygen, oxygen_variable)
    if (self%graz_dia) &
       call self%request_coupling(self%id_dia,diatoms_variable)
-   if (self%graz_fla) &
-      call self%register_state_dependency(self%id_fla, flagellates_variable)
    if (self%graz_din) &
       call self%request_coupling(self%id_din,dinoflagellates_variable)
-  ! if (self%graz_cya) &
-  !    call self%request_coupling(self%id_cya,cyanobacteria_variable)
    
    ! Register optional link to external DIC pool
-   call self%register_state_dependency(self%id_dic,'dic','mmol/m**3','total dissolved inorganic carbon',required=.true.)
+   call self%register_state_dependency(self%id_dic,'dic','mmol/m**3','total dissolved inorganic carbon',required=.false.)
    if (dic_variable/='') call self%request_coupling(self%id_dic,dic_variable)   
 
    ! Register environmental dependencies
@@ -226,12 +194,8 @@
          'total secondary production rate', output=output_instantaneous)
    call self%register_diagnostic_variable(self%id_secprod_dia,'secprod_dia','mmol-N/m**3/d', &
          'dia secondary production rate', output=output_instantaneous)
-   call self%register_diagnostic_variable(self%id_secprod_fla,'secprod_fla','mmol-N/m**3/d', &
-         'fla secondary production rate', output=output_instantaneous)
    call self%register_diagnostic_variable(self%id_secprod_din,'secprod_din','mmol-N/m**3/d', &
          'din secondary production rate', output=output_instantaneous)
-!   call self%register_diagnostic_variable(self%id_secprod_cya,'secprod_cya','mmol-N/m**3/d', &
-!         'cya secondary production rate', output=output_instantaneous)
    return
 
 99 call self%fatal_error('fabm_uhh_ergom_split_zoo','Error reading namelist uhh_ergom_split_zoo')
@@ -252,10 +216,10 @@
    _DECLARE_ARGUMENTS_DO_
 !
 ! !LOCAL VARIABLES:
-   real(rk)                   :: dia,fla,din,zoo,temp
+   real(rk)                   :: dia,din,zoo,temp
    real(rk)                   :: psum, gross_zoo
    real(rk)                   :: mortality, excretion
-   real(rk)                   :: graz_dia,graz_fla,graz_din,graz_cya
+   real(rk)                   :: graz_dia,graz_din
    real(rk), parameter        :: secs_pr_day = 86400.0_rk
 !EOP
 !-----------------------------------------------------------------------
@@ -265,47 +229,34 @@
 
    ! Retrieve current (local) state variable values.
    dia=0.0_rk; graz_dia=0.0_rk
-   fla=0.0_rk; graz_fla=0.0_rk
    din=0.0_rk; graz_din=0.0_rk
-!   cya=0.0_rk; graz_cya=0.0_rk
    _GET_(self%id_zoo,zoo)                    ! zooplankton
    if (self%graz_dia) _GET_(self%id_dia,dia) ! diatoms
-   if (self%graz_fla) _GET_(self%id_fla,fla) ! flagellates
    if (self%graz_din) _GET_(self%id_din,din) ! dinoflagellates
-!   if (self%graz_cya) _GET_(self%id_cya,cya) ! cuanobacteria
 
    ! Retrieve current environmental conditions.
    _GET_(self%id_temp,temp)      ! local temperature
    
-   psum = dia + fla + din + self%zoo0
+   psum = dia  + din  + self%zoo0
    gross_zoo = zoo + self%zoo0
    if (self%graz_dia) then
       graz_dia = fpz(self,self%gmax_dia,temp,self%topt,psum) * &
                  dia/psum * gross_zoo
       _SET_ODE_(self%id_dia,-graz_dia)
    end if
-   if (self%graz_fla) then
-      graz_fla = fpz(self,self%gmax_fla,temp,self%topt,psum) * &
-                 fla/psum * gross_zoo
-      _SET_ODE_(self%id_fla,-graz_fla)
-   end if
+   
    if (self%graz_din) then
       graz_din = fpz(self,self%gmax_din,temp,self%topt,psum) * &
                  din/psum * gross_zoo
       _SET_ODE_(self%id_din,-graz_din)   
    end if
- !  if (self%graz_cya) then
-!      graz_cya = fpz(self,self%gmax_cya,temp,self%topt,psum) * &
-!                 cya/psum * gross_zoo
-!      _SET_ODE_(self%id_cya,-graz_cya)
-!   end if
    excretion = self%lza * zoo * gross_zoo
    mortality = self%lzd * zoo * gross_zoo
 
    ! Set temporal derivatives
-   _SET_ODE_(self%id_zoo,self%slopf*(graz_dia + graz_fla + graz_din ) - mortality - excretion)
+   _SET_ODE_(self%id_zoo,self%slopf*(graz_dia + graz_din ) - mortality - excretion)
    _SET_ODE_(self%id_ammonium,excretion)
-   _SET_ODE_(self%id_detritus,mortality + (1.0_rk-self%slopf)*(graz_dia + graz_fla + graz_din ))
+   _SET_ODE_(self%id_detritus,mortality + (1.0_rk-self%slopf)*(graz_dia  + graz_din ))
    if (self%use_pho) then
    _SET_ODE_(self%id_phosphate, self%p_to_n * excretion)
    end if
@@ -315,14 +266,12 @@
 
    ! set DIC source, if available
    if (_AVAILABLE_(self%id_dic)) &
-     _SET_ODE_(self%id_dic,106.0d0/16.0d0*excretion)
+     _SET_ODE_(self%id_dic, self%s2 * excretion)
 
    ! Export diagnostic variables
-   _SET_DIAGNOSTIC_(self%id_secprod_total,(self%slopf*(graz_dia + graz_fla + graz_din ))*secs_pr_day)
+   _SET_DIAGNOSTIC_(self%id_secprod_total,(self%slopf*(graz_dia  + graz_din ))*secs_pr_day)
    _SET_DIAGNOSTIC_(self%id_secprod_dia,self%slopf*graz_dia*secs_pr_day)
-   _SET_DIAGNOSTIC_(self%id_secprod_fla,self%slopf*graz_fla*secs_pr_day)
    _SET_DIAGNOSTIC_(self%id_secprod_din,self%slopf*graz_din*secs_pr_day)
-!   _SET_DIAGNOSTIC_(self%id_secprod_cya,self%slopf*graz_cya*secs_pr_day)
    ! Leave spatial loops (if any)
    _LOOP_END_
 
@@ -342,10 +291,10 @@
    _DECLARE_ARGUMENTS_DO_PPDD_
 !
 ! !LOCAL VARIABLES:
-   real(rk)                   :: dia,fla,din,zoo,temp
+   real(rk)                   :: dia,din,zoo,temp
    real(rk)                   :: psum, gross_zoo
    real(rk)                   :: mortality, excretion
-   real(rk)                   :: graz_dia,graz_fla,graz_din
+   real(rk)                   :: graz_dia,graz_din,graz_cya
    real(rk), parameter        :: secs_pr_day = 86400.0_rk
 !EOP
 !-----------------------------------------------------------------------
@@ -355,40 +304,26 @@
 
    ! Retrieve current (local) state variable values.
    dia=0.0_rk; graz_dia=0.0_rk
-   fla=0.0_rk; graz_fla=0.0_rk
    din=0.0_rk; graz_din=0.0_rk
-!   cya=0.0_rk; graz_cya=0.0_rk
    _GET_(self%id_zoo,zoo)                    ! zooplankton
    if (self%graz_dia) _GET_(self%id_dia,dia) ! diatoms
-   if (self%graz_fla) _GET_(self%id_fla,fla) ! flagellates
    if (self%graz_din) _GET_(self%id_din,din) ! dinoflagellates
-!   if (self%graz_cya) _GET_(self%id_cya,cya) ! cuanobacteria
 
    ! Retrieve current environmental conditions.
    _GET_(self%id_temp,temp)      ! local temperature
    
-   psum = dia + fla + din  + self%zoo0
+   psum = dia  + din  + self%zoo0
    gross_zoo = zoo + self%zoo0
    if (self%graz_dia) then
       graz_dia = fpz(self,self%gmax_dia,temp,self%topt,psum) * &
                  dia/psum * gross_zoo
       _SET_DD_SYM_(self%id_dia,self%id_zoo,graz_dia)
    end if
-   if (self%graz_fla) then
-      graz_fla = fpz(self,self%gmax_fla,temp,self%topt,psum) * &
-                 fla/psum * gross_zoo
-      _SET_DD_SYM_(self%id_fla,self%id_zoo,graz_fla)
-   end if
    if (self%graz_din) then
       graz_din = fpz(self,self%gmax_din,temp,self%topt,psum) * &
                  din/psum * gross_zoo
       _SET_DD_SYM_(self%id_din,self%id_zoo,graz_din)
    end if
-!   if (self%graz_cya) then
-!      graz_cya = fpz(self,self%gmax_cya,temp,self%topt,psum) * &
-!                 cya/psum * gross_zoo
-!      _SET_DD_SYM_(self%id_cya,self%id_zoo,graz_cya)
-!   end if
    excretion = self%lza * zoo * gross_zoo
    mortality = self%lzd * zoo * gross_zoo
 
@@ -399,7 +334,7 @@
    if (self%use_oxy) then
      _SET_DD_(self%id_oxygen,self%id_oxygen, self%s2 * excretion)
    end if
-   _SET_DD_SYM_(self%id_zoo,self%id_detritus,mortality + (1.0_rk-self%slopf)*( graz_din + graz_fla + graz_dia))
+   _SET_DD_SYM_(self%id_zoo,self%id_detritus,mortality + (1.0_rk-self%slopf)*( graz_din  + graz_dia))
    _SET_DD_SYM_(self%id_zoo,self%id_ammonium,excretion)
 
    ! set DIC source, if available
@@ -407,11 +342,9 @@
      _SET_PP_(self%id_dic,self%id_dic,106.0d0/16.0d0*excretion)
 
    ! Export diagnostic variables
-   _SET_DIAGNOSTIC_(self%id_secprod_total,(self%slopf*(graz_dia + graz_fla + graz_din ))*secs_pr_day)
+   _SET_DIAGNOSTIC_(self%id_secprod_total,(self%slopf*(graz_dia  + graz_din ))*secs_pr_day)
    _SET_DIAGNOSTIC_(self%id_secprod_dia,self%slopf*graz_dia*secs_pr_day)
-   _SET_DIAGNOSTIC_(self%id_secprod_fla,self%slopf*graz_fla*secs_pr_day)
    _SET_DIAGNOSTIC_(self%id_secprod_din,self%slopf*graz_din*secs_pr_day)
-!   _SET_DIAGNOSTIC_(self%id_secprod_cya,self%slopf*graz_cya*secs_pr_day)
 
    ! Leave spatial loops (if any)
    _LOOP_END_

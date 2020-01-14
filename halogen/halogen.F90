@@ -37,8 +37,8 @@
       real(rk) :: l_rem
       real(rk) :: l_nit
       real(rk) :: l_uv
-      real(rk) :: one_pr_Dref
-      real(rk) :: one_pr_Iref
+      real(rk) :: D_ref !one_pr_Dref
+      real(rk) :: I_ref !one_pr_Iref
       real(rk) :: k_photo
       real(rk) :: doc_const
       logical  :: use_ph
@@ -72,7 +72,7 @@
    class (type_uhh_halogen), intent(inout), target :: self
    integer,                        intent(in)          :: configunit
 
-   real(rk)     :: c_initial=0.1
+!   real(rk)     :: c_initial=0.1
    real(rk)     :: pp_air=-99.
    real(rk)     :: beta=0.0_rk   ! nmol/mmolN
    real(rk)     :: l_con=0.0_rk
@@ -95,12 +95,10 @@
    character(len=64)         :: nutrient_variable
    character(len=64)         :: uv_variable
    character(len=64)         :: doc_variable
-   character(len=64)         :: short_name
-   character(len=256)        :: long_name
 
-  namelist /uhh_halogen/ c_initial, pp_air, beta,     &
+  namelist /uhh_halogen/ pp_air, beta,     &
                       l_con, l_rem, l_nit, l_uv, D_ref, I_ref,&
-                      short_name, long_name, pp_air_variable, &
+                      pp_air_variable, &   
                       phyprod_variable,phyloss_variable,      &
                       halogen_type, ph_variable,              &
                       k_photo, doc_const,                     &
@@ -125,17 +123,26 @@
    self%read_pp_air    = pp_air_variable /= ''
    self%use_phyprod    = phyprod_variable /= ''
    self%use_phyloss    = phyloss_variable /= ''
-   self%pp_air         = pp_air
-   self%halogen_type   = halogen_type
-   self%beta           = beta
-   self%l_con          = l_con
-   self%l_rem          = l_rem
-   self%l_nit          = l_nit
-   self%l_uv           = l_uv
-   self%one_pr_Dref    = 1.0_rk/D_ref
-   self%one_pr_Iref    = 1.0_rk/I_ref
-   self%doc_const      = doc_const
-   self%k_photo        = k_photo
+
+   call self%get_parameter(self%pp_air, 'pp_air', default=pp_air)  
+
+   call self%get_parameter(self%halogen_type, 'halogen_type', default=halogen_type)
+   call self%get_parameter(self%beta, 'beta', default=beta)
+
+   call self%get_parameter(self%l_con, 'l_con', default=l_con)
+
+   call self%get_parameter(self%l_rem, 'l_rem', default=l_rem)  
+
+   call self%get_parameter(self%l_nit, 'l_nit', default=l_nit)  
+   call self%get_parameter(self%l_uv, 'l_uv', default=l_uv)
+
+   call self%get_parameter(self%D_ref, 'D_ref', default=1.0_rk/D_ref) 
+
+   call self%get_parameter(self%I_ref, 'I_ref', default=1.0_rk/I_ref) 
+
+   call self%get_parameter(self%doc_const, 'doc_const', default=doc_const) 
+
+   call self%get_parameter(self%k_photo, 'k_photo', default=k_photo)
 
    ! Store parameter values in our own derived type
    ! NB: all rates must be provided in values per day,
@@ -143,9 +150,8 @@
    !call self%get_parameter(self%trate_res_veg, 'trate_res_veg', default=trate_res_veg,scale_factor=one_pr_day)
 
    ! Register state variables
-   call self%register_state_variable(self%id_halo,trim(short_name), &
-         'nmol/m**3',trim(long_name)//' concentration', c_initial, &
-         minimum=0.0e-7_rk)
+   call self%register_state_variable(self%id_halo,'halogen', &
+         'nmol/m**3',' concentration')
 
    ! Register dependencies on external standard variables
    if (self%use_ph) then
@@ -174,7 +180,7 @@
    end if
 
    ! Dependency to UV model
-   call self%register_dependency(self%id_uv, 'uv_target','','UV irradiance')
+   call self%register_dependency(self%id_uv, 'uv_target','W/m2','UV irradiance')
    call self%request_coupling(self%id_uv, uv_variable)
 
    ! Register environmental dependencies
@@ -184,12 +190,12 @@
    if (self%read_pp_air) call self%register_dependency(self%id_pp_air,pp_air_variable)
 
    ! Register diagnostic variables
-   call self%register_diagnostic_variable(self%id_prod,trim(short_name)//'prod','nmol/m**3/s', &
-         trim(long_name)//' production rate', output=output_instantaneous)
-   call self%register_diagnostic_variable(self%id_loss,trim(short_name)//'loss','nmol/m**3/s', &
-         trim(long_name)//' loss rate', output=output_instantaneous)
-   call self%register_diagnostic_variable(self%id_surface_flux,trim(short_name)//'flux','nmol/m**2/s', &
-         trim(long_name)//' surface flux', output=output_instantaneous)
+   call self%register_diagnostic_variable(self%id_prod,'prod','nmol/m**3/s', &
+         ' production rate', output=output_instantaneous)
+   call self%register_diagnostic_variable(self%id_loss,'loss','nmol/m**3/s', &
+         ' loss rate', output=output_instantaneous)
+   call self%register_diagnostic_variable(self%id_surface_flux,'flux','nmol/m**2/s', &
+         ' surface flux', output=output_instantaneous)
 
    return
 99 call self%fatal_error('fabm_uhh_halogen','Error reading namelist uhh_halogen')
@@ -243,11 +249,11 @@
    photoprod = self%k_photo * I * doc
    
    ! photolysis
-   photolysis = self%l_uv * I*self%one_pr_Iref * halo
+   photolysis = self%l_uv * I*self%I_ref * halo
    ! constant decay
    const_decay = self%l_con * halo
    ! decay coupled to remineralisation
-   remin_decay = self%l_rem * self%one_pr_Dref * D * 1.066_rk**temp * halo
+   remin_decay = self%l_rem * self%D_ref * D * 1.066_rk**temp * halo
    
    ! Set temporal derivatives
    _SET_ODE_(self%id_halo,prod + photoprod - photolysis - const_decay - remin_decay)

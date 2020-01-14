@@ -56,10 +56,13 @@
    I0_variable = ''
    ! Read the namelist
    if (configunit>=0) read(configunit,nml=uhh_uv,err=99)
-   self%I0_const = I0_const
-   self%uv_fraction = UV_fraction
-   self%aw = attenuation_coefficient
 
+   call self%get_parameter(self%I0_const, 'I0_const', default=I0_const) 
+
+   call self%get_parameter(self%uv_fraction, 'UV_fraction', default=UV_fraction)
+ 
+   call self%get_parameter(self%aw, 'attenuation_coefficient', default=attenuation_coefficient)
+   
    ! Register dependencies
    call self%register_dependency(self%id_I0, standard_variables%surface_downwelling_photosynthetic_radiative_flux)
    call self%register_dependency(self%id_pres, standard_variables%pressure)

@@ -53,8 +53,8 @@
 ! \caption{Structure of the \cite{Neumannetal2002} model
 ! with cyanobacteria (cya),
 ! diatoms (dia), dinoflagellates (fla), detritus (det), zooplankton (zoo),
-! ammonium (amm), nitrate (nit) detritus sediment (sed), oxygen (oxy)
-! and phosphorus (pho) as the ten
+! ammonium (amm), nitrate (nit) detritus sediment (sed), oxygen (oxy), 
+! dissolved inorganic carbon (dic) and phosphorus (pho) as the eleven
 ! state variables.
 ! The concentrations are in mmol N\,m$^{-3}$,
 !  mmol N\,m$^{-2}$,  mmol P\,m$^{-3}$ and l O$_2$m$^{-3}$.
@@ -89,9 +89,9 @@
       type (type_diagnostic_variable_id)   :: id_GPP,id_NCP,id_PPR,id_NPR
 ! Model parameters
       real(rk) :: sfl_po,sfl_am,sfl_ni,kc
-      real(rk) :: tf,lan,anmx,oan,beta_an,lda,tda,beta_da
+      real(rk) :: tf,lan,anmx,oan,beta_an,lda,tda,beta_da,beta_bg,topt
       real(rk) :: pvel,sr,s1,s2,s3,s4,a0,a1,a2,lds,lsd,tau_crit,lsa,bsa,ph1,ph2
-      real(rk) :: minimum_thsum,depo
+      real(rk) :: minimum_thsum,depo, w_de, tbg, fl_initial
       logical  :: fluff
 
       contains
@@ -105,6 +105,9 @@
       procedure :: do_surface
       
   end type
+
+  real(rk), parameter :: secs_pr_day = 86400.0_rk
+  real(rk), parameter :: one_pr_day = 1.0_rk/86400.0_rk
 !EOP
 !-----------------------------------------------------------------------
 
@@ -130,12 +133,7 @@ subroutine initialize(self,configunit)
    integer,                intent(in)            :: configunit
 !
 ! !LOCAL VARIABLES:
-   real(rk)           :: zo_initial=4.5_rk
-   real(rk)           :: de_initial=4.5_rk
-   real(rk)           :: am_initial=4.5_rk
-   real(rk)           :: ni_initial=4.5_rk
-   real(rk)           :: po_initial=4.5_rk
-   real(rk)           :: o2_initial=4.5_rk
+   
    real(rk)           :: sfl_po=0.0015_rk
    real(rk)           :: sfl_am=0.07_rk
    real(rk)           :: sfl_ni=0.09_rk
@@ -175,8 +173,7 @@ subroutine initialize(self,configunit)
    character(len=64)  :: dic_variable
    
    namelist /uhh_ergom_split_base/ &
-                        de_initial,am_initial,ni_initial,po_initial,  &
-                        o2_initial,sfl_po,sfl_am,sfl_ni,fluff,        &
+                        sfl_po,sfl_am,sfl_ni,fluff,        &
                         fl_initial,w_de,kc,tbg,beta_bg,depo,   &
                         topt,lan,oan,beta_an,anmx,dic_variable,  &
                         lda,tda,beta_da,pvel,sr,s1,s2,s3,s4,a0,a1,a2, &
@@ -187,58 +184,60 @@ subroutine initialize(self,configunit)
    
    dic_variable=''
 !  Read the namelist
-   if (configunit>0) read(configunit,nml=uhh_ergom_split_base,err=99,end=100)
+   if (configunit>=0) read(configunit,nml=uhh_ergom_split_base,err=99)
 
 !  Store parameter values in our own derived type
 !  NB! All rates must be provided in values per day,
 !  and are converted here to values per second
-   self%sfl_po   = sfl_po
-   self%sfl_ni   = sfl_ni
-   self%sfl_am   = sfl_am
-   self%fluff    = fluff
-   self%kc       = kc
-   self%lan      = lan/secs_pr_day
-   self%anmx     = anmx/secs_pr_day
-   self%oan      = oan
-   self%beta_an  = beta_an
-   self%lda      = lda/secs_pr_day
-   self%tda      = tda
-   self%beta_da  = beta_da
-   self%pvel     = pvel/secs_pr_day
-   self%sr       = sr
-   self%s1       = s1
-   self%s2       = s2
-   self%s3       = s3
-   self%s4       = s4
-   self%a0       = a0
-   self%a1       = a1
-   self%a2       = a2
-   self%depo     = depo
-   if (fluff) then
-   self%lds      = lds/secs_pr_day
-   self%lsd      = lsd/secs_pr_day
-   self%tau_crit = tau_crit
-   self%lsa      = lsa/secs_pr_day
-   self%bsa      = bsa
-   self%ph1      = ph1
-   self%ph2      = ph2
-   self%minimum_thsum = minimum_thsum
-   end if
+   call self%get_parameter(self%tbg, 'tbg', default=tbg)
+   call self%get_parameter(self%beta_bg, 'beta_bg', default=beta_bg)
+   call self%get_parameter(self%topt, 'topt', default=topt)
+   call self%get_parameter(self%fl_initial, 'fl_initial', default=fl_initial)
+   call self%get_parameter(self%lds, 'lds', default=lds)
+   call self%get_parameter(self%lsd, 'lsd', default=lsd)
+   call self%get_parameter(self%tau_crit, 'tau_crit', default=tau_crit)
+   call self%get_parameter(self%lsa, 'lsa', default=lsa)
+   call self%get_parameter(self%sfl_po, 'sfl_po', default=sfl_po, scale_factor=one_pr_day)
+   call self%get_parameter(self%sfl_ni, 'sfl_ni', default=sfl_ni, scale_factor=one_pr_day)
+   call self%get_parameter(self%sfl_am, 'sfl_am', default=sfl_am, scale_factor=one_pr_day)
+   call self%get_parameter(self%fluff, 'fluff', default=fluff)
+   call self%get_parameter(self%kc, 'kc', default=kc)   
+   call self%get_parameter(self%lan, 'lan', default=lan, scale_factor=one_pr_day)
+   call self%get_parameter(self%anmx, 'anmx', default=anmx, scale_factor=one_pr_day)
+   call self%get_parameter(self%oan, 'oan', default=oan)
+   call self%get_parameter(self%beta_an, 'beta_an', default=beta_an)   
+   call self%get_parameter(self%lda, 'lda', default=lda, scale_factor=one_pr_day)
+   call self%get_parameter(self%tda, 'tda', default=tda) 
+   call self%get_parameter(self%beta_da, 'beta_da', default=beta_da)
+   call self%get_parameter(self%pvel, 'pvel', default=pvel, scale_factor=one_pr_day)
+   call self%get_parameter(self%sr, 'sr', default=sr)
+   call self%get_parameter(self%s1, 's1', default=s1)
+   call self%get_parameter(self%s2, 's2', default=s2)
+   call self%get_parameter(self%s3, 's3', default=s3)
+   call self%get_parameter(self%s4, 's4', default=s4)
+   call self%get_parameter(self%a0, 'a0', default=a0)   
+   call self%get_parameter(self%a1, 'a1', default=a1)
+   call self%get_parameter(self%a2, 'a2', default=a2)
+   call self%get_parameter(self%depo, 'depo', default=depo)
+   call self%get_parameter(self%w_de, 'w_de', default= w_de)
+   call self%get_parameter(self%bsa, 'bsa', default=bsa)
+   call self%get_parameter(self%ph1, 'ph1', default=ph1)
+   call self%get_parameter(self%ph2, 'ph2', default=ph2)
+   call self%get_parameter(self%minimum_thsum, 'minimum_thsum', default=minimum_thsum) 
+!   end if
 
 !  Register state variables
 
    call self%register_state_variable(self%id_de,'det','mmol n/m**3','detritus',     &
-         de_initial,minimum=0.0_rk,vertical_movement=w_de/secs_pr_day)
+         vertical_movement=w_de/secs_pr_day)
    call self%register_state_variable(self%id_am,'amm','mmol n/m**3','ammonium',     &
-         am_initial,minimum=0.0_rk,no_river_dilution=.true.)
+         no_river_dilution=.true.)
    call self%register_state_variable(self%id_ni,'nit','mmol n/m**3','nitrate',      &
-         ni_initial,minimum=0.0_rk,no_river_dilution=.true.)
+         no_river_dilution=.true.)
    call self%register_state_variable(self%id_po,'pho','mmol p/m**3','phosphate',    &
-         po_initial,minimum=0.0_rk,no_river_dilution=.true.)
-   call self%register_state_variable(self%id_o2,'oxy','mmol o2/m**3','oxygen',	    &
-	 o2_initial) 
-   if (self%fluff) call self%register_bottom_state_variable(self%id_fl,'flf','mmol n/m**2','fluff', &  
-         fl_initial,minimum=0.0_rk)         
+         no_river_dilution=.true.)
+   call self%register_state_variable(self%id_o2,'oxy','mmol o2/m**3','oxygen') 
+   if (self%fluff) call self%register_bottom_state_variable(self%id_fl,'flf','mmol n/m**2','fluff')         
 
 ! Register diagnostic variables
 

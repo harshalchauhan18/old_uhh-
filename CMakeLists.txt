@@ -2,6 +2,7 @@ add_library(fabm_models_uhh OBJECT
             uhh_model_library.F90
             ergom_split/ergom_base.F90
             ergom_split/ergom_zoo.F90
+	    ergom_split/ergom_utilities.F90
             clc/clc_base.F90
             clc/clc_heterocysts.F90
             clc/clc_recruitive_cells.F90

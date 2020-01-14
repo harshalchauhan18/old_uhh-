@@ -31,7 +31,8 @@
    private
 !
 ! !PRIVATE DATA MEMBERS:
-   real(rk), parameter :: secs_pr_day  = 86400._rk, secs_pr_hour = 3600._rk
+   real(rk), parameter :: secs_pr_day  = 86400._rk
+   real(rk), parameter :: secs_pr_hour = 3600._rk
 !
 ! !REVISION HISTORY:!
 !  Original author(s): Inga Hense
@@ -44,7 +45,7 @@
       type (type_diagnostic_variable_id) :: id_NFIX, id_dPAR
 
 !     Model parameters
-      real(rk) :: muemax_phy,alpha,mortphy,rem, &
+      real(rk) :: muemax_phy,alpha,mortphy,rem,rkc, &
                   topt,tl1,tl2,depo,nbot,albedo_bio,drag_bio
    contains
       procedure :: initialize
@@ -78,9 +79,6 @@
 !  Original author(s): Inga Hense
 !
 ! !LOCAL VARIABLES:
-   real(rk)                  :: nut_initial=4.5   ! nutrients
-   real(rk)                  :: phy_initial=0.    ! phytolankton (cyanobacteria)
-   real(rk)                  :: det_initial=4.5   ! detritus
    real(rk)                  :: rkc=0.03          ! attenuation coefficient (organic matter)
    real(rk)                  :: alpha=0.3         ! initial slope of the PI-curve
    real(rk)                  :: muemax_phy=0.25   ! maximum growth rate
@@ -97,7 +95,7 @@
    real(rk)                  :: drag_bio=0.05     ! factor for drag coef. changes through surface phy
 
    namelist /uhh_phy_feedback/ &
-              nut_initial,phy_initial,det_initial,rkc,alpha,   &
+              rkc,alpha,   & 
               muemax_phy,mortphy,rem,topt,tl1,tl2,w_phy,w_det, &
               depo,nbot
 !EOP
@@ -109,26 +107,28 @@
 !  Store parameter values in our own derived type
 !  NB: all rates must be provided in values per day,
 !  and are converted here to values per second.
-   self%alpha       = alpha/secs_pr_day
-   self%muemax_phy  = muemax_phy/secs_pr_day
-   self%mortphy     = 1.0_rk/mortphy/secs_pr_day
-   self%rem         = rem/secs_pr_day
-   self%topt        = topt
-   self%tl1         = tl1
-   self%tl2         = tl2
-   self%depo        = depo/secs_pr_day
-   self%nbot        = nbot
-   self%albedo_bio  = albedo_bio
-   self%drag_bio    = drag_bio
+   call self%get_parameter(self%rkc, 'rkc', default=rkc)
+   call self%get_parameter(self%alpha, 'alpha', default=alpha, scale_factor=secs_pr_day)
+   call self%get_parameter(self%muemax_phy, 'muemax_phy', default=muemax_phy, scale_factor=secs_pr_day) 
+   call self%get_parameter(self%mortphy, 'mortphy', default=mortphy, scale_factor=secs_pr_day)
+   call self%get_parameter(self%rem, 'rem', default=rem, scale_factor=secs_pr_day)
+   call self%get_parameter(self%topt, 'topt', default=topt) 
+   call self%get_parameter(self%tl1, 'tl1', default=tl1) 
+   call self%get_parameter(self%tl2, 'tl2', default=tl2)
+   call self%get_parameter(self%depo, 'depo', default=depo, scale_factor=secs_pr_day)  
+   call self%get_parameter(self%nbot, 'nbot', default=nbot)
+   call self%get_parameter(self%albedo_bio, 'albedo_bio', default=albedo_bio) 
+   call self%get_parameter(self%drag_bio, 'drag_bio', default=drag_bio) 
+
 
 !  Register state variables
    call self%register_state_variable(self%id_nut,'nut','mmol/m**3','nutrients',     &
-                                    nut_initial,minimum=0.0_rk,no_river_dilution=.true.)
+                                    no_river_dilution=.true.)
    call self%register_state_variable(self%id_phy,'phy','mmol/m**3','phytoplankton', &
-                                    phy_initial,minimum=0.0_rk,vertical_movement=    &
+                                    vertical_movement=    &
                                     w_phy/secs_pr_day,specific_light_extinction=rkc)
    call self%register_state_variable(self%id_det,'det','mmol/m**3','detritus',      &
-                                    det_initial,minimum=0.0_rk,vertical_movement=    &
+                                    vertical_movement=    &
                                     w_det/secs_pr_day,specific_light_extinction=rkc)
 
 !  Register diagnostic variables

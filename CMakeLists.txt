@@ -8,7 +8,6 @@ add_library(fabm_models_uhh OBJECT
             clc/clc_recruitive_cells.F90
             clc/clc_vegetative_cells.F90
             clc/clc_akinetes.F90
-            pnd/pnd.F90
             clcuni/clcuni.F90
             clcv2/clcv2.F90
             dinoflag/dinoflag.F90
@@ -16,7 +15,6 @@ add_library(fabm_models_uhh OBJECT
             phy_feedback/phy_feedback.F90
             halogen/halogen.F90
             halogen/uv.F90
-            npzd/npzd.F90
            )
 
 add_dependencies(fabm_models_uhh fabm_base)

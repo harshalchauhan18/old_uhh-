@@ -25,14 +25,12 @@ contains
       use fabm_uhh_clcaki
       use fabm_uhh_clcrec
       use fabm_uhh_clcveg
-      use fabm_uhh_pnd
       use fabm_uhh_clcuni
       use fabm_uhh_clcv2
       use fabm_uhh_dinoflag
       use fabm_uhh_diatoms
       use fabm_uhh_halogen
       use fabm_uhh_uv
-      use fabm_uhh_npzd
 
       ! Add new UHH models here
 
@@ -49,14 +47,13 @@ contains
          case ('clcaki');   allocate(type_uhh_clcaki::model)
          case ('clcrec');   allocate(type_uhh_clcrec::model)
          case ('clcveg');   allocate(type_uhh_clcveg::model)
-         case ('pnd');      allocate(type_uhh_pnd::model)
          case ('clcuni');   allocate(type_uhh_clcuni::model)
          case ('clcv2');    allocate(type_uhh_clcv2::model)
          case ('dinoflag'); allocate(type_uhh_dinoflag::model)
          case ('diatoms');  allocate(type_uhh_diatoms::model)
          case ('halogen');  allocate(type_uhh_halogen::model)
          case ('uv');       allocate(type_uhh_uv::model)
-         case ('npzd');     allocate(type_uhh_npzd::model)
+         
          ! Add new UHH models here
       end select
 
